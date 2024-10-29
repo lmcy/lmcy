@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+   <meta name="google-site-verification" content="lGFBocGLgbYlYuHuOjc4WYd9PoiYi9oZlaP3RQUTzFo" />
+  <title>Gmail API Quickstart</title>
+  <meta charset="utf-8" />
+  <style>
+    img {
+      max-width: 300px;  /* 限制验证码图片的最大宽度 */
+      height: auto;      /* 高度自动调整以保持比例 */
+    }
+  </style>
+</head>
+<body>
+  <h1>Gmail API - 查看邮件内容</h1>
+  <!-- Authorization and sign-out buttons -->
+  <button id="authorize_button" style="display: none;">Authorize</button>
+  <button id="signout_button" style="display: none;">Sign Out</button>
+  <pre id="content" style="white-space: pre-wrap;"></pre>
+
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    const CLIENT_ID = '528018632775-00cal8cae55m9giff4fshgpp0bnrdca3.apps.googleusercontent.com';
+    const API_KEY = 'AIzaSyDlF-TENmHtMaRUDTndgNtkzwbhgI8wUFI';
+    const SCOPES = 'https://www.googleapis.com/auth/gmail.readonly';
+    const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest';
+
+    let tokenClient;
+    let gapiInited = false;
+    let gisInited = false;
+
+    function gapiLoaded() {
+      gapi.load('client', initializeGapiClient);
+    }
+
+    async function initializeGapiClient() {
+      await gapi.client.init({
+        apiKey: API_KEY,
+        discoveryDocs: [DISCOVERY_DOC],
+      });
+      gapiInited = true;
+      maybeEnableButtons();
+    }
+
+    function gisLoaded() {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: (response) => {
+          if (response.error) {
+            console.error(response);
+            alert('Authorization failed. Please try again.');
+            return;
+          }
+          document.getElementById('signout_button').style.display = 'block';
+          document.getElementById('authorize_button').style.display = 'none';
+          listEmails();
+        }
+      });
+      gisInited = true;
+      maybeEnableButtons();
+    }
+
+    function maybeEnableButtons() {
+      if (gapiInited && gisInited) {
+        document.getElementById('authorize_button').style.display = 'block';
+        document.getElementById('authorize_button').onclick = () => tokenClient.requestAccessToken();
+        document.getElementById('signout_button').onclick = handleSignoutClick;
+      }
+    }
+
+    async function listEmails() {
+      try {
+        const response = await gapi.client.gmail.users.messages.list({
+          'userId': 'me',
+          'maxResults': 5
+        });
+        const messages = response.result.messages;
+        if (!messages || messages.length == 0) {
+          document.getElementById('content').innerText = 'No messages found.';
+          return;
+        }
+        document.getElementById('content').innerText = 'Fetching emails...\n';
+        messages.forEach((message) => getEmailContent(message.id));
+      } catch (error) {
+        console.error('Error fetching email list:', error);
+        document.getElementById('content').innerText = 'Error fetching email list.';
+      }
+    }
+
+    async function getEmailContent(messageId) {
+      try {
+        const response = await gapi.client.gmail.users.messages.get({
+          'userId': 'me',
+          'id': messageId
+        });
+        const message = response.result;
+        const headers = message.payload.headers;
+        const subject = headers.find((header) => header.name === 'Subject')?.value || 'No Subject';
+        const from = headers.find((header) => header.name === 'From')?.value || 'Unknown Sender';
+        const snippet = message.snippet || 'No Content';
+
+        document.getElementById('content').innerText += `\nFrom: ${from}\nSubject: ${subject}\nSnippet: ${snippet}\n\n`;
+
+        if (message.payload.parts) {
+          message.payload.parts.forEach(part => {
+            if (part.filename && part.body && part.body.attachmentId) {
+              // 如果发现图片附件，调用 displayAttachment 显示在页面上
+              displayAttachment(messageId, part.body.attachmentId, part.mimeType);
+            } else if (part.mimeType.startsWith("image/")) {
+              // 如果图片嵌入在正文中，也显示出来
+              displayInlineImage(part);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching email content:', error);
+      }
+    }
+
+    async function displayAttachment(messageId, attachmentId, mimeType) {
+      try {
+        const attachmentResponse = await gapi.client.gmail.users.messages.attachments.get({
+          'userId': 'me',
+          'messageId': messageId,
+          'id': attachmentId
+        });
+        const attachmentData = attachmentResponse.result.data;
+
+        const imageData = `data:${mimeType};base64,${attachmentData}`;
+        
+        const imgElement = document.createElement('img');
+        imgElement.src = imageData;
+        imgElement.alt = 'Verification Code Image';
+
+        document.getElementById('content').appendChild(imgElement);
+        console.log(`Attachment displayed.`);
+      } catch (error) {
+        console.error('Error displaying attachment:', error);
+      }
+    }
+
+    function displayInlineImage(part) {
+      try {
+        const imageData = `data:${part.mimeType};base64,${part.body.data}`;
+        const imgElement = document.createElement('img');
+        imgElement.src = imageData;
+        imgElement.alt = 'Inline Verification Code Image';
+        document.getElementById('content').appendChild(imgElement);
+        console.log(`Inline image displayed.`);
+      } catch (error) {
+        console.error('Error displaying inline image:', error);
+      }
+    }
+
+    function handleSignoutClick() {
+      google.accounts.oauth2.revoke(gapi.client.getToken().access_token, () => {
+        gapi.client.setToken('');
+        document.getElementById('content').innerText = '';
+        document.getElementById('authorize_button').style.display = 'block';
+        document.getElementById('signout_button').style.display = 'none';
+      });
+    }
+
+    window.onload = () => {
+      gapi.load("client", gapiLoaded);
+      google.accounts.id.initialize({ client_id: CLIENT_ID });
+      google.accounts.id.prompt(); 
+    };
+  </script>
+  <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+  <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+</html>
